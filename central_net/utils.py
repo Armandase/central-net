@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from fusion_methods import select_fusion_method
 
 
 class FusionBlock(nn.Module):
@@ -10,6 +11,7 @@ class FusionBlock(nn.Module):
         out_channels,
         stride=2,
         dropout_prob=0.4,
+        fusion_method="add",
         alpha_central=1,
         alpha_1=1,
         alpha_2=1,
@@ -19,8 +21,15 @@ class FusionBlock(nn.Module):
         self.alpha_central = alpha_central
         self.alpha_1 = alpha_1
         self.alpha_2 = alpha_2
+        self.fusion_method = select_fusion_method(fusion_method)
         self.fusion_conv = nn.Conv2d(
-            in_channels, out_channels, kernel_size=5, stride=1, padding=2, bias=False
+            # in_channels, out_channels, kernel_size=5, stride=1, padding=2, bias=False
+            in_channels,
+            out_channels,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+            bias=False,
         )
         self.fusion_pool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.relu = nn.ReLU()
@@ -28,10 +37,16 @@ class FusionBlock(nn.Module):
         self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, x1, x2, x_central=None):
+        print(f"x1.shape: {x1.shape}")
+        print(f"x2.shape: {x2.shape}")
+        # if x_central is None:
+        #     x = self.alpha_1 * x1 + self.alpha_2 * x2
+        # else:
+        #     x = self.alpha_central * x_central + self.alpha_1 * x1 + self.alpha_2 * x2
         if x_central is None:
-            x = self.alpha_1 * x1 + self.alpha_2 * x2
+            x = self.fusion_method(x1, x2)
         else:
-            x = self.alpha_central * x_central + self.alpha_1 * x1 + self.alpha_2 * x2
+            x = x_central + self.fusion_method(x1, x2)
 
         x = self.fusion_conv(x)
         x = self.fusion_pool(x)

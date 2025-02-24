@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from decoders.MLP import MLP
 from encoders.ResNet import BasicBlock, ExpansionResBlock
+from utils import FusionBlock
 
 
 class CentralResNet(nn.Module):
@@ -72,6 +73,30 @@ class CentralResNet(nn.Module):
             block, num_blocks[3], stride=2, inter_channels=512
         )
 
+        self.fusion_layer1 = FusionBlock(
+            in_channels=256,
+            out_channels=512,
+            stride=2,
+            dropout_prob=dropout_rate,
+        )
+        self.fusion_layer2 = FusionBlock(
+            in_channels=512,
+            out_channels=256,
+            stride=2,
+            dropout_prob=dropout_rate,
+        )
+        self.fusion_layer3 = FusionBlock(
+            in_channels=256,
+            out_channels=512,
+            stride=2,
+            dropout_prob=dropout_rate,
+        )
+        self.fusion_layer4 = FusionBlock(
+            in_channels=512,
+            out_channels=512,
+            stride=2,
+            dropout_prob=dropout_rate,
+        )
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
 
         self.classifier_mod1 = classifier
@@ -84,12 +109,21 @@ class CentralResNet(nn.Module):
         out_mod2 = self.relu(self.maxpool(self.bn1_mod2(self.conv1_mod2(x_mod2))))
 
         out_mod1 = self.layer1_mod1(out_mod1)
-        out_mod1 = self.layer2_mod1(out_mod1)
-        out_mod1 = self.layer3_mod1(out_mod1)
-        out_mod1 = self.layer4_mod1(out_mod1)
         out_mod2 = self.layer1_mod2(out_mod2)
+        out_central = self.fusion_layer1(out_mod1, out_mod2)
+        print(f"out_central.shape: {out_central.shape}")
+
+        out_mod1 = self.layer2_mod1(out_mod1)
         out_mod2 = self.layer2_mod2(out_mod2)
+        out_central = self.fusion_layer2(out_mod1, out_mod2, out_central)
+        print(f"out_central.shape: {out_central.shape}")
+
+        out_mod1 = self.layer3_mod1(out_mod1)
         out_mod2 = self.layer3_mod2(out_mod2)
+        out_central = self.fusion_layer3(out_mod1, out_mod2, out_central)
+        print(f"out_central.shape: {out_central.shape}")
+
+        out_mod1 = self.layer4_mod1(out_mod1)
         out_mod2 = self.layer4_mod2(out_mod2)
 
         out_mod1 = self.avg_pool(out_mod1)

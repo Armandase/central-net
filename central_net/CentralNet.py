@@ -1,151 +1,161 @@
 import torch
 import torch.nn as nn
-from encoders.ResNet import Bottleneck
 from decoders.MLP import MLP
+from encoders.ResNet import BasicBlock, ExpansionResBlock
 
 
 class CentralResNet(nn.Module):
     def __init__(
         self,
-        block,
-        layers,
+        num_blocks,
+        nb_channels_mod1,
+        nb_channels_mod2,
         num_classes,
-        dropout_rate=0.0,
-        nb_channel_mod1=3,
-        nb_channel_mod2=1,
         classifier=None,
-        fusion_method=None,
+        expansion=4,
+        block=ExpansionResBlock,
+        dropout_rate=0.0,
     ):
-        super(CentralResNet, self).__init__()
-        self.in_channels = 64
+        super().__init__()
+        self.expansion = expansion
+        self.in_channels = 64  # starting input size fo residual blocks
+        # This value will increase by the factor of 4
 
-        # resnet stem mod1 part
         self.conv1_mod1 = nn.Conv2d(
-            nb_channel_mod1,
+            nb_channels_mod1,
             self.in_channels,
             kernel_size=7,
-            stride=2,
-            padding=3,
+            stride=1,
+            padding=0,
+            bias=False,
+        )
+        self.conv1_mod2 = nn.Conv2d(
+            nb_channels_mod2,
+            self.in_channels,
+            kernel_size=7,
+            stride=1,
+            padding=0,
+            bias=False,
         )
         self.bn1_mod1 = nn.BatchNorm2d(self.in_channels)
-
-        # resnet stem mod2 part
-        self.conv1_mod2 = nn.Conv2d(
-            nb_channel_mod2,
-            self.in_channels,
-            kernel_size=7,
-            stride=2,
-            padding=3,
-        )
         self.bn1_mod2 = nn.BatchNorm2d(self.in_channels)
-
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-
-        # res blocks modality 1
-        self.layer1_mod1 = self._make_layer(
-            block=block, blocks=layers[0], out_channels=64, stride=1
-        )
-        self.layer2_mod1 = self._make_layer(
-            block=block, blocks=layers[1], out_channels=128, stride=2
-        )
-        self.layer3_mod1 = self._make_layer(
-            block=block, blocks=layers[2], out_channels=256, stride=2
-        )
-        self.layer4_mod1 = self._make_layer(
-            block=block, blocks=layers[3], out_channels=512, stride=2
-        )
-
-        # res blocks modality 2
-        self.layer1_mod2 = self._make_layer(
-            block=block, blocks=layers[0], out_channels=64, stride=1
-        )
-        self.layer2_mod2 = self._make_layer(
-            block=block, blocks=layers[1], out_channels=128, stride=2
-        )
-        self.layer3_mod2 = self._make_layer(
-            block=block, blocks=layers[2], out_channels=256, stride=2
-        )
-        self.layer4_mod2 = self._make_layer(
-            block=block, blocks=layers[3], out_channels=512, stride=2
-        )
-
-        # classifier block
-        self.adappool = nn.AdaptiveAvgPool2d((2, 2))
-        if classifier is None:
-            self.classifier_mod1 = nn.Linear(512 * block.expansion, num_classes)
-            self.classifier_mod2 = nn.Linear(512 * block.expansion, num_classes)
+        if block == BasicBlock:
+            self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         else:
-            self.classifier_mod1 = classifier(512 * block.expansion, num_classes)
-            self.classifier_mod2 = classifier(512 * block.expansion, num_classes)
+            self.maxpool = nn.Identity()
 
-    def _make_layer(self, block, out_channels, blocks, stride=1):
+        self.layer1_mod1 = self._layer(
+            block, num_blocks[0], stride=1, inter_channels=64
+        )
+        self.layer2_mod1 = self._layer(
+            block, num_blocks[1], stride=2, inter_channels=128
+        )
+        self.layer3_mod1 = self._layer(
+            block, num_blocks[2], stride=2, inter_channels=256
+        )
+        self.layer4_mod1 = self._layer(
+            block, num_blocks[3], stride=2, inter_channels=512
+        )
+        # reset in_channels to 64
+        self.in_channels = 64
 
-        downsample = None
+        self.layer1_mod2 = self._layer(
+            block, num_blocks[0], stride=1, inter_channels=64
+        )
+        self.layer2_mod2 = self._layer(
+            block, num_blocks[1], stride=2, inter_channels=128
+        )
+        self.layer3_mod2 = self._layer(
+            block, num_blocks[2], stride=2, inter_channels=256
+        )
+        self.layer4_mod2 = self._layer(
+            block, num_blocks[3], stride=2, inter_channels=512
+        )
 
-        if stride != 1 or self.in_channels != out_channels * block.expansion:
+        self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
 
-            downsample = nn.Sequential(
+        self.classifier_mod1 = classifier
+        self.classifier_mod2 = classifier
+
+        self.relu = nn.ReLU()
+
+    def forward(self, x_mod1, x_mod2):
+        out_mod1 = self.relu(self.maxpool(self.bn1_mod1(self.conv1_mod1(x_mod1))))
+        out_mod2 = self.relu(self.maxpool(self.bn1_mod2(self.conv1_mod2(x_mod2))))
+
+        out_mod1 = self.layer1_mod1(out_mod1)
+        out_mod1 = self.layer2_mod1(out_mod1)
+        out_mod1 = self.layer3_mod1(out_mod1)
+        out_mod1 = self.layer4_mod1(out_mod1)
+        out_mod2 = self.layer1_mod2(out_mod2)
+        out_mod2 = self.layer2_mod2(out_mod2)
+        out_mod2 = self.layer3_mod2(out_mod2)
+        out_mod2 = self.layer4_mod2(out_mod2)
+
+        out_mod1 = self.avg_pool(out_mod1)
+        out_mod2 = self.avg_pool(out_mod2)
+        out_mod1 = out_mod1.view(out_mod1.shape[0], -1)
+        out_mod2 = out_mod2.view(out_mod2.shape[0], -1)
+
+        if self.classifier_mod1 is not None and self.classifier_mod2 is not None:
+            out_mod1 = self.classifier_mod1(out_mod1)
+            out_mod2 = self.classifier_mod2(out_mod2)
+
+        return out_mod1, out_mod2
+
+    def _layer(self, block, num_blocks, stride, inter_channels):
+        layers = []
+        downsampling_layer = None
+        if stride != 1 or self.in_channels != inter_channels * self.expansion:
+            downsampling_layer = nn.Sequential(
                 nn.Conv2d(
-                    in_channels=self.in_channels,
-                    out_channels=out_channels * block.expansion,
+                    self.in_channels,
+                    inter_channels * self.expansion,
                     kernel_size=1,
                     stride=stride,
+                    padding=0,
                 ),
-                nn.BatchNorm2d(num_features=out_channels * block.expansion),
+                nn.BatchNorm2d(inter_channels * self.expansion),
             )
-
-        layers = []
-
-        layers.append(block(self.in_channels, out_channels, stride, downsample))
-
-        self.in_channels = out_channels * block.expansion
-
-        for i in range(1, blocks):
-            layers.append(block(self.in_channels, out_channels))
+        layers.append(
+            block(self.in_channels, inter_channels, downsampling_layer, stride)
+        )
+        self.in_channels = inter_channels * self.expansion
+        for _ in range(num_blocks - 1):
+            layers.append(block(self.in_channels, inter_channels))
 
         return nn.Sequential(*layers)
 
-    def forward(self, x_mod1, x_mod2):
 
-        x_mod1 = self.relu(self.bn1_mod1(self.conv1_mod1(x_mod1)))
-        x_mod1 = self.maxpool(x_mod1)
-        x_mod1 = self.layer1_mod1(x_mod1)
-        x_mod1 = self.layer2_mod1(x_mod1)
-        x_mod1 = self.layer3_mod1(x_mod1)
-        x_mod1 = self.layer4_mod1(x_mod1)
-        x_mod1 = self.adppool(x_mod1)
-        x_mod1 = torch.flatten(x_mod1, 1)
-
-        x_mod2 = self.relu(self.bn1_mod2(self.conv1_mod2(x_mod2)))
-        x_mod2 = self.maxpool(x_mod2)
-        x_mod2 = self.layer1_mod2(x_mod2)
-        x_mod2 = self.layer2_mod2(x_mod2)
-        x_mod2 = self.layer3_mod2(x_mod2)
-        x_mod2 = self.layer4_mod2(x_mod2)
-        x_mod2 = self.adppool(x_mod2)
-        x_mod2 = torch.flatten(x_mod2, 1)
-
-        return self.classifier_mod1(x_mod1), self.classifier_mod2(x_mod2)
-
-
-def get_central_net(num_classes=6, channels_rgb=3, channels_nir=22):
-    model = CentralResNet(
-        Block,
-        [3, 4, 6, 3],
-        num_classes,
-        dropout_rate=0.0,
-        nb_channel_mod1=channels_rgb,
-        nb_channel_mod2=channels_nir,
-        classifier=MLP,
+def get_central_net(num_classes=6, channels_mod1=3, channels_mod2=1):
+    mlp = MLP(
+        input_dim=512 * 4,
+        output_dim=num_classes,
+        dropout_rate=0.3,
     )
+    model = CentralResNet(
+        num_blocks=[3, 4, 6, 3],
+        nb_channels_mod1=channels_mod1,
+        nb_channels_mod2=channels_mod2,
+        num_classes=num_classes,
+        expansion=4,
+        dropout_rate=0.0,
+        classifier=mlp,
+    )
+
     return model
 
 
 if __name__ == "__main__":
-    central = get_central_net()
+    nb_channel_mod1 = 3
+    nb_channel_mod2 = 1
+    nb_classes = 6
+    central = get_central_net(
+        nb_classes, channels_mod1=nb_channel_mod1, channels_mod2=nb_channel_mod2
+    )
 
-    x_mod1 = torch.randn(1, 3, 224, 224)
-    x_mod2 = torch.randn(1, 22, 224, 224)
+    x_mod1 = torch.randn(1, nb_channel_mod1, 224, 224)
+    x_mod2 = torch.randn(1, nb_channel_mod2, 224, 224)
 
     out_mod1, out_mod2 = central(x_mod1, x_mod2)
+    print(out_mod1.shape, out_mod2.shape)

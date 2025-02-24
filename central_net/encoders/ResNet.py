@@ -136,7 +136,6 @@ class ResNet(nn.Module):
         )
         self.bn1 = nn.BatchNorm2d(self.in_channels)
         if block == BasicBlock:
-            print("Using BasicBlock")
             self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         else:
             self.maxpool = nn.Identity()
@@ -273,11 +272,12 @@ if __name__ == "__main__":
         nn.Linear(256, nb_class),
     )
     # model = ResNet50(img_channels=3, num_classes=nb_class, classifier=MLP)
-    model = ResNet50(img_channels=3, num_classes=nb_class, classifier=MLP_50)
-    model = ResNet18(img_channels=3, num_classes=nb_class, classifier=MLP_18)
+    nb_channel = 1
+    model = ResNet50(img_channels=nb_channel, num_classes=nb_class, classifier=MLP_50)
+    model = ResNet18(img_channels=nb_channel, num_classes=nb_class, classifier=MLP_18)
 
     model = model.to("cuda")
-    summary(model, (3, 224, 224))
-    dummy = torch.randn(1, 3, 224, 224).to("cuda")
+    summary(model, (nb_channel, 224, 224))
+    dummy = torch.randn(1, nb_channel, 224, 224).to("cuda")
     out = model(dummy)
     print(out.shape)

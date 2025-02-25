@@ -43,7 +43,6 @@ class MLP_2d(nn.Module):
 
     def forward(self, x):
         x = x.view(x.size(0), -1)
-        print("input mlp:", x.shape)
         x = self.fc1(x)
         x = self.relu(x)
         x = self.dropout(x)
@@ -52,5 +51,4 @@ class MLP_2d(nn.Module):
         x = self.dropout(x)
         x = self.fc3(x)
         x = F.softmax(x, dim=1)
-        print("output mlp:", x.shape)
         return x

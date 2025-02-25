@@ -1,6 +1,6 @@
-from .ResNet_timm import ResNetWithClassif
+from .ResNet_timm import ResNetWithClassif, ResNet
 
-encoders_list = {"resnet50": ResNetWithClassif}
+encoders_list = {"resnet50_classif": ResNetWithClassif, "resnet50": ResNet}
 
 
 def select_encoder(name):

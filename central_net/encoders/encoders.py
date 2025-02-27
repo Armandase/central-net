@@ -1,4 +1,4 @@
-from .ResNet_timm import ResNetWithClassif, ResNet
+from .ResNet import ResNetWithClassif, ResNet
 
 encoders_list = {"resnet50_classif": ResNetWithClassif, "resnet50": ResNet}
 
